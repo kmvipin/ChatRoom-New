@@ -1,7 +1,8 @@
-import axios from 'axios';
+import axios, { isAxiosError } from "axios";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'; // your backend
-interface Page<T> {
+const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8080";
+
+interface SpringPage<T> {
   data: {
     content: T[];
     last: boolean;
@@ -13,23 +14,18 @@ interface Page<T> {
   };
 }
 
-interface UserRoom {
+interface RoomFromBackend {
   id: number;
   name: string;
   description: string | null;
-  unreeadCount?: number;
-  type: string;
+  memberCount?: number;
+  creatorUsername?: string | null;
   createdBy: number;
   updatedBy: number;
   createdAt: Date;
   updatedAt: Date;
 }
 
-interface JoinRoomResponse {
-  success: boolean;
-  message: string;
-  data?: UserRoom;
-}
 export async function GET(request: Request) {
   const authHeader = request.headers.get("Authorization");
   const { searchParams } = new URL(request.url);
@@ -46,7 +42,7 @@ export async function GET(request: Request) {
       params.search = search;
     }
 
-    const response = await axios.get<Page<UserRoom>>(`${BACKEND_URL}/api/user-room/filter`, {
+    const response = await axios.get<SpringPage<RoomFromBackend>>(`${BACKEND_URL}/api/room/filter`, {
       params,
       headers: {
         "Content-Type": "application/json",
@@ -60,11 +56,12 @@ export async function GET(request: Request) {
       id: room.id.toString(),
       name: room.name,
       description: room.description || "",
-      unreeadCount: room.unreeadCount || 0,
+      memberCount: room.memberCount || 0,
       createdBy: room.createdBy,
       updatedBy: room.updatedBy,
       createdAt: room.createdAt,
       updatedAt: room.updatedAt,
+      creatorUsername: room.creatorUsername || "Anonymous",
     }));
 
     return Response.json({
@@ -96,31 +93,3 @@ export async function GET(request: Request) {
     );
   }
 }
-
-export async function POST(request: Request) {
-  const { roomId } = await request.json();
-  const authHeader = request.headers.get('Authorization') || '';
-  try {
-    const response = await axios.post<JoinRoomResponse>(
-      `${BACKEND_URL}/api/user-room/join/${roomId}`,
-      {},
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: authHeader || '',
-        },
-      }
-    );
-
-    return Response.json(response.data, { status: 200 });
-  } catch (error: any) {
-    if (error.response?.data) {
-      return Response.json(error.response.data, { status: error.response.status });
-    }
-    
-    return Response.json({
-      success: false,
-      message: error.message || 'Network error',
-    }, { status: 500 });
-  }
-};

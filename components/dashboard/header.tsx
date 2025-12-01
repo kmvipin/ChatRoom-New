@@ -12,10 +12,18 @@ export default function Header({ onMenuToggle }: HeaderProps) {
   const router = useRouter()
   const [userName, setUserName] = useState("")
 
-  useEffect(() => {
-    const name = localStorage.getItem("userName")
-    setUserName(name || "")
-  }, [])
+  useState(() => {
+    const stored = localStorage.getItem("user");
+    if (!stored) return "User";
+
+    try {
+      const userObj = JSON.parse(stored);
+      setUserName(userObj.userName || "User");
+    } catch (err) {
+      return "User";
+    }
+  });
+
 
   const handleLogout = () => {
     localStorage.removeItem("authToken")
@@ -48,7 +56,6 @@ export default function Header({ onMenuToggle }: HeaderProps) {
         <div className="flex items-center gap-2 sm:gap-3">
           <div className="flex flex-col text-right hidden sm:block">
             <span className="text-sm font-medium text-foreground">{userName}</span>
-            <span className="text-xs text-muted-foreground">Online</span>
           </div>
           <button
             onClick={handleLogout}

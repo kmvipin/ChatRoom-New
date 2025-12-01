@@ -3,16 +3,18 @@
 import type React from "react"
 
 import { useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter } from 'next/navigation'
 import Link from "next/link"
-import { Mail, Lock, User } from "lucide-react"
+import { Mail, Lock, User, Shield } from 'lucide-react'
 
 export default function SignupPage() {
   const router = useRouter()
+  const [step, setStep] = useState<"signup" | "otp">("signup")
   const [username, setUsername] = useState("")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
+  const [otp, setOtp] = useState("")
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
 
@@ -27,15 +29,133 @@ export default function SignupPage() {
       return
     }
 
-    if (username && email && password.length >= 6) {
-      localStorage.setItem("authToken", "mock-token-" + Date.now())
-      localStorage.setItem("userEmail", email)
-      localStorage.setItem("userName", username)
-      router.push("/dashboard")
-    } else {
-      setError("Please fill in all fields correctly")
+    if (!username || !email || password.length < 6) {
+      setError("Please fill in all fields correctly (password minimum 6 characters)")
+      setLoading(false)
+      return
+    }
+
+    try {
+      const response = await fetch("/api/auth/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, email, password }),
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        setStep("otp")
+        setError("")
+      } else {
+        setError(data.message || "Signup failed")
+      }
+    } catch (err) {
+      setError("An error occurred. Please try again.")
+    } finally {
       setLoading(false)
     }
+  }
+
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError("")
+    setLoading(true)
+
+    if (!otp || otp.length !== 6) {
+      setError("Please enter a valid 6-digit OTP")
+      setLoading(false)
+      return
+    }
+
+    try {
+      const response = await fetch("/api/auth/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, otp }),
+      })
+      const data = await response.json()
+      console.log("OTP verification response data:", data);
+
+      if (data.success === true) {
+        // Save auth data to localStorage
+        const user = { 
+          id: data.data.userId,
+          userName: data.data.userName, 
+          email: data.data.email
+         }
+         
+        localStorage.setItem("authToken", data.data.token)
+        localStorage.setItem("user", JSON.stringify(user))
+
+        // Redirect to dashboard
+        router.push("/dashboard")
+      } else {
+        setError(data.message || "OTP verification failed")
+      }
+    } catch (err) {
+      setError("An error occurred. Please try again.")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (step === "otp") {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-background to-card flex items-center justify-center p-4">
+        <div className="w-full max-w-md">
+          <div className="bg-card border border-border rounded-lg p-8 shadow-xl">
+            <div className="mb-8 text-center">
+              <div className="inline-flex items-center justify-center w-12 h-12 bg-primary rounded-lg mb-4">
+                <Shield className="w-7 h-7 text-primary-foreground" />
+              </div>
+              <h1 className="text-3xl font-bold text-foreground mb-2">Verify Email</h1>
+              <p className="text-muted-foreground text-sm">
+                Enter the 6-digit OTP sent to <span className="font-medium text-foreground">{email}</span>
+              </p>
+            </div>
+
+            <form onSubmit={handleVerifyOtp} className="space-y-4">
+              {error && (
+                <div className="bg-red-500/10 border border-red-500/50 text-red-400 px-4 py-3 rounded-lg text-sm">
+                  {error}
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-foreground">One-Time Password</label>
+                <input
+                  type="text"
+                  value={otp}
+                  onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  placeholder="000000"
+                  maxLength={6}
+                  className="w-full px-4 py-2.5 bg-input border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary text-foreground placeholder-muted-foreground transition text-center text-2xl tracking-widest"
+                />
+                <p className="text-xs text-muted-foreground">Check your email for the OTP code</p>
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-medium py-2.5 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading ? "Verifying..." : "Verify OTP"}
+              </button>
+            </form>
+
+            <div className="mt-6 pt-6 border-t border-border">
+              <button
+                onClick={() => setStep("signup")}
+                className="w-full text-center text-muted-foreground text-sm hover:text-foreground transition"
+              >
+                Back to signup
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -125,7 +245,7 @@ export default function SignupPage() {
               disabled={loading}
               className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-medium py-2.5 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? "Creating account..." : "Create Account"}
+              {loading ? "Sending OTP..." : "Continue"}
             </button>
           </form>
 

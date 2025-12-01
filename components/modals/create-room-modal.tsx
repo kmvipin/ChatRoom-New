@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { X } from 'lucide-react'
+import axios from "axios";
 
 interface CreateRoomModalProps {
   isOpen: boolean
@@ -14,7 +15,7 @@ export default function CreateRoomModal({ isOpen, onClose, onCreate }: CreateRoo
   const [description, setDescription] = useState("")
   const [error, setError] = useState("")
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
 
@@ -29,6 +30,7 @@ export default function CreateRoomModal({ isOpen, onClose, onCreate }: CreateRoo
     }
 
     onCreate({ name: name.trim(), description: description.trim() })
+
     setName("")
     setDescription("")
     onClose()

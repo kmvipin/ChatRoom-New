@@ -3,25 +3,46 @@
 import { useState, useEffect, useRef } from "react"
 import { useParams } from 'next/navigation'
 import { Send, Phone, Info } from 'lucide-react'
-
-interface Message {
-  id: string
-  sender: string
-  content: string
-  timestamp: string
-}
+import {
+  connectWebSocket,
+  disconnectWebSocket,
+  subscribeToPrivateChat,
+  sendPrivateMessage,
+  Message,
+} from '@/lib/websocket'
 
 export default function PrivateChat() {
   const params = useParams()
   const chatId = params.id as string
-  const [messages, setMessages] = useState<Message[]>([
-    { id: "1", sender: "John Doe", content: "Hey! How are you?", timestamp: "14:20" },
-    { id: "2", sender: "You", content: "I'm good, thanks!", timestamp: "14:21" },
-    { id: "3", sender: "John Doe", content: "Great to hear!", timestamp: "14:22" },
-  ])
+  const [messages, setMessages] = useState<Message[]>([])
   const [newMessage, setNewMessage] = useState("")
-  const [userName] = useState(() => localStorage.getItem("userName") || "User")
+  const [userId] = useState(() => {
+    const stored = localStorage.getItem("user");
+    if (!stored) return "User";
+
+    try {
+      const userObj = JSON.parse(stored);
+      return userObj.id || "User";  
+    } catch (err) {
+      return "User";
+    }
+  });
+  const [userName] = useState(() => {
+    const stored = localStorage.getItem("user");
+    if (!stored) return "User";
+
+    try {
+      const userObj = JSON.parse(stored);
+      return userObj.userName || "User";  
+    } catch (err) {
+      return "User";
+    }
+  });
+
+  const [isConnected, setIsConnected] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const subscriptionRef = useRef<any>(null)
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -31,15 +52,56 @@ export default function PrivateChat() {
     scrollToBottom()
   }, [messages])
 
+  useEffect(() => {
+    const initializeWebSocket = async () => {
+      try {
+        setIsLoading(true)
+        // Replace with your actual WebSocket server URL
+        const socketUrl = process.env.NEXT_PUBLIC_WEBSOCKET_URL || "http://localhost:8080/ws"
+        
+        await connectWebSocket({
+          url: socketUrl,
+          onConnect: () => {
+            console.log("[v0] Connected to WebSocket")
+            setIsConnected(true)
+            
+            // Subscribe to private chat messages
+            subscriptionRef.current = subscribeToPrivateChat(userId,(message: Message) => {
+              setMessages((prev) => [...prev, message])
+            })
+          },
+          onDisconnect: () => {
+            setIsConnected(false)
+          },
+          onError: (error) => {
+            console.error("[v0] WebSocket error:", error)
+            setIsConnected(false)
+          },
+        })
+      } catch (error) {
+        console.error("[v0] Failed to initialize WebSocket:", error)
+        setIsConnected(false)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    initializeWebSocket()
+
+    return () => {
+      if (subscriptionRef.current) {
+        subscriptionRef.current.unsubscribe()
+      }
+      disconnectWebSocket()
+    }
+  }, [chatId])
+
   const handleSendMessage = () => {
-    if (newMessage.trim()) {
-      const message: Message = {
-        id: String(messages.length + 1),
+    if (newMessage.trim() && isConnected) {
+      sendPrivateMessage(chatId, {
         sender: userName,
         content: newMessage,
-        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-      }
-      setMessages([...messages, message])
+      })
       setNewMessage("")
     }
   }
@@ -53,7 +115,9 @@ export default function PrivateChat() {
           </div>
           <div className="min-w-0">
             <h2 className="text-base sm:text-lg font-bold text-foreground truncate">John Doe</h2>
-            <p className="text-xs text-green-400">Online</p>
+            <p className={`text-xs ${isConnected ? "text-green-400" : "text-gray-400"}`}>
+              {isConnected ? "Online" : "Connecting..."}
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-1 sm:gap-3 flex-shrink-0">
@@ -67,6 +131,11 @@ export default function PrivateChat() {
       </div>
 
       <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-6 space-y-3 sm:space-y-4">
+        {isLoading && (
+          <div className="flex justify-center py-8">
+            <p className="text-muted-foreground">Connecting to chat...</p>
+          </div>
+        )}
         {messages.map((msg) => (
           <div key={msg.id} className={`flex gap-2 sm:gap-3 ${msg.sender === userName ? "justify-end" : "justify-start"}`}>
             {msg.sender !== userName && (
@@ -103,12 +172,14 @@ export default function PrivateChat() {
                 handleSendMessage()
               }
             }}
-            placeholder="Type a message..."
-            className="flex-1 bg-input border border-border rounded-lg px-3 sm:px-4 py-2 sm:py-2.5 text-sm sm:text-base text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-secondary transition"
+            disabled={!isConnected}
+            placeholder={isConnected ? "Type a message..." : "Connecting..."}
+            className="flex-1 bg-input border border-border rounded-lg px-3 sm:px-4 py-2 sm:py-2.5 text-sm sm:text-base text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-secondary transition disabled:opacity-50"
           />
           <button
             onClick={handleSendMessage}
-            className="px-3 sm:px-4 py-2 sm:py-2.5 bg-secondary hover:bg-secondary/90 text-primary-foreground rounded-lg transition flex items-center gap-2 font-medium text-sm flex-shrink-0"
+            disabled={!isConnected || !newMessage.trim()}
+            className="px-3 sm:px-4 py-2 sm:py-2.5 bg-secondary hover:bg-secondary/90 text-primary-foreground rounded-lg transition flex items-center gap-2 font-medium text-sm flex-shrink-0 disabled:opacity-50"
           >
             <Send className="w-4 h-4" />
             <span className="hidden sm:inline">Send</span>
