@@ -26,14 +26,10 @@ export async function POST(req: Request) {
       }
     )
 
-    console.log("Signup response:", response.data)
-
     return Response.json({
       success: true,
       message: "OTP sent to your email",
       data: {
-        token: response.data.token,
-        userId: response.data.userId,
         email,
         username,
       },

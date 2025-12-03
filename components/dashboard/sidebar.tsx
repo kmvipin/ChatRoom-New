@@ -1,24 +1,25 @@
-// components/DashboardSidebar.tsx
+// components/dashboard/sidebar.tsx
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { Plus, MessageCircle, Users, Menu, X, MessageSquarePlus, Loader2 } from "lucide-react";
+import {
+  Plus,
+  MessageCircle,
+  MessageSquarePlus,
+  Loader2,
+  X,
+} from "lucide-react";
 import CreateRoomModal from "@/components/modals/create-room-modal";
 import JoinRoomModal from "@/components/modals/join-room-modal";
 import StartPrivateChatModal from "@/components/modals/start-private-chat-modal";
-import axios from "axios";
 import api from "@/lib/api";
 
 interface Room {
   id: string;
   name: string;
-  description?: string;
   type: "public" | "private" | "group";
   unread?: number;
 }
-
 interface Chat {
   id: string;
   name: string;
@@ -26,256 +27,229 @@ interface Chat {
   unread?: number;
 }
 
-interface User {
-  id: string;
-  username: string;
-  isOnline: boolean;
+interface Props {
+  isOpen: boolean;
+  onClose: () => void;
+  onSelectChat: (type: "room" | "private", id: string, title: string) => void;
 }
 
-export default function DashboardSidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
-
-  const router = useRouter()
-  const pathname = usePathname();
+export default function DashboardSidebar({
+  isOpen,
+  onClose,
+  onSelectChat,
+}: Props) {
+  // === ROOMS ===
   const [rooms, setRooms] = useState<Room[]>([]);
-  const [chats, setChats] = useState<Chat[]>([]);
-  const [allUsers, setAllUsers] = useState<User[]>([]);
   const [loadingRooms, setLoadingRooms] = useState(true);
-  const [hasMore, setHasMore] = useState(true);
-  const [page, setPage] = useState(1);
+  const [hasMoreRooms, setHasMoreRooms] = useState(true);
+  const [roomPage, setRoomPage] = useState(1);
 
-  const [createRoomOpen, setCreateRoomOpen] = useState(false)
-  const [joinRoomOpen, setJoinRoomOpen] = useState(false)
-  const [startChatOpen, setStartChatOpen] = useState(false)
+  // === CHATS (DMs) ===
+  const [chats, setChats] = useState<Chat[]>([]);
+  const [loadingChats, setLoadingChats] = useState(true);
+  const [hasMoreChats, setHasMoreChats] = useState(true);
+  const [chatPage, setChatPage] = useState(1);
 
-  const observer = useRef<IntersectionObserver | null>(null);
+  // === MODALS ===
+  const [createRoomOpen, setCreateRoomOpen] = useState(false);
+  const [joinRoomOpen, setJoinRoomOpen] = useState(false);
+  const [startChatOpen, setStartChatOpen] = useState(false);
 
-  // Load user rooms with infinite scroll
+  // === OBSERVERS ===
+  const roomObserver = useRef<IntersectionObserver | null>(null);
+  const chatObserver = useRef<IntersectionObserver | null>(null);
+
+  /* ---------- LOAD ROOMS ---------- */
   const loadRooms = useCallback(async (pageNum: number) => {
     if (pageNum === 1) setLoadingRooms(true);
-
     try {
-
       const res = await api.get(`/api/user-rooms`, {
         params: { page: pageNum, size: 10 },
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("authToken") || ""}`,
-        },
+        headers: { Authorization: `Bearer ${localStorage.getItem("authToken") || ""}` },
       });
-
-
-      if (res.status !== 200) throw new Error("Failed to load rooms");
-
-      const data = await res.data;
-
+      const data = res.data;
       const newRooms = data.rooms.map((r: any) => ({
         id: r.id,
         name: r.name,
         type: "public" as const,
-        unread: r.unreeadCount || 0,
+        unread: r.unreadCount || 0,
       }));
-
-      if (pageNum === 1) {
-        setRooms(newRooms);
-      } else {
-        setRooms((prev) => [...prev, ...newRooms]);
-      }
-
-      setHasMore(data.hasMore);
+      if (pageNum === 1) setRooms(newRooms);
+      else setRooms((prev) => [...prev, ...newRooms]);
+      setHasMoreRooms(data.hasMore);
     } catch (err) {
-      console.error("Failed to load rooms:", err);
+      console.error(err);
     } finally {
       setLoadingRooms(false);
     }
   }, []);
 
-  // Initial load
-  useEffect(() => {
-    loadRooms(1);
-  }, [loadRooms]);
+  useEffect(() => { loadRooms(1); }, [loadRooms]);
 
-  // Infinite scroll observer
   const lastRoomRef = useCallback(
-    (node: HTMLAnchorElement | null) => {
+    (node: HTMLDivElement | null) => {
       if (loadingRooms) return;
-      if (observer.current) observer.current.disconnect();
-
-      observer.current = new IntersectionObserver((entries) => {
-        if (entries[0].isIntersecting && hasMore) {
-          setPage((prev) => prev + 1);
-        }
+      roomObserver.current?.disconnect();
+      roomObserver.current = new IntersectionObserver((entries) => {
+        if (entries[0].isIntersecting && hasMoreRooms) setRoomPage((p) => p + 1);
       });
-
-      if (node) observer.current.observe(node);
+      if (node) roomObserver.current.observe(node);
     },
-    [loadingRooms, hasMore]
+    [loadingRooms, hasMoreRooms]
   );
 
-  // Load more when page changes
   useEffect(() => {
-    if (page > 1) {
-      loadRooms(page);
+    if (roomPage > 1) loadRooms(roomPage);
+  }, [roomPage, loadRooms]);
+
+  /* ---------- LOAD CHATS (Infinite Scroll) ---------- */
+  const loadChats = useCallback(async (pageNum: number) => {
+    if (pageNum === 1) setLoadingChats(true);
+    try {
+      const res = await fetch(`/api/user-chats?page=${pageNum}&size=15`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem("authToken") || ""}` },
+      });
+      if (!res.ok) throw new Error("Failed to load chats");
+      const data = await res.json();
+      const newChats = data.users.map((u: any) => ({
+        id: u.id,
+        name: u.name,
+        type: "private" as const,
+        unread: u.unread || 0,
+      }));
+      if (pageNum === 1) setChats(newChats);
+      else setChats((prev) => [...prev, ...newChats]);
+      setHasMoreChats(data.hasMore);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingChats(false);
     }
-  }, [page, loadRooms]);
-
-  // Load chats & users (existing)
-  useEffect(() => {
-    const fetchOthers = async () => {
-      try {
-        const [chatsRes, usersRes] = await Promise.all([
-          fetch("/api/user-chats"),
-          fetch("/api/users"),
-        ]);
-
-        if (chatsRes.ok) setChats(await chatsRes.json());
-        if (usersRes.ok) setAllUsers(await usersRes.json());
-      } catch (err) {
-        console.error("Error loading chats/users:", err);
-      }
-    };
-
-    fetchOthers();
   }, []);
 
+  useEffect(() => { loadChats(1); }, [loadChats]);
+
+  const lastChatRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (loadingChats) return;
+      chatObserver.current?.disconnect();
+      chatObserver.current = new IntersectionObserver((entries) => {
+        if (entries[0].isIntersecting && hasMoreChats) setChatPage((p) => p + 1);
+      });
+      if (node) chatObserver.current.observe(node);
+    },
+    [loadingChats, hasMoreChats]
+  );
+
+  useEffect(() => {
+    if (chatPage > 1) loadChats(chatPage);
+  }, [chatPage, loadChats]);
+
+  /* ---------- HANDLERS ---------- */
   const handleCreateRoom = async (roomData: { name: string; description: string }) => {
     try {
-
-      const response = await axios.post("/api/room", roomData,{
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${localStorage.getItem("authToken") || ""}`,
-      },
-    });
-
-      if (response.status === 201) {
-        const newRoom = response.data.data;
-        console.log("Room created:", newRoom)
-        setRooms([{ id: newRoom.id, name: newRoom.name, type: newRoom.type, unread: newRoom.unreeadCount || 0 },...rooms])
-        router.push(`/dashboard/room/${newRoom.id}`)
-        onClose()
-      }
-    } catch (error) {
-      console.error("Error creating room:", error)
+      const token = localStorage.getItem("authToken") || "";
+      const res = await api.post("/api/room", roomData, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const newRoom = res.data.data;
+      setRooms((prev) => [{ id: newRoom.id, name: newRoom.name, type: "public", unread: 0 }, ...prev]);
+      onSelectChat("room", newRoom.id, newRoom.name);
+      setCreateRoomOpen(false);
+      onClose();
+    } catch (err) {
+      console.error(err);
     }
-  }
+  };
 
   const handleJoinRoom = async (roomId: string) => {
     try {
-
-      const response = await axios.post("/api/user-rooms", {roomId},{
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${localStorage.getItem("authToken") || ""}`,
-        },
+      const token = localStorage.getItem("authToken") || "";
+      const res = await api.post("/api/user-rooms", { roomId }, {
+        headers: { Authorization: `Bearer ${token}` },
       });
-
-      if (response.status === 200) {
-        const room = response.data.data;
-        console.log("Joined room:", room)
-        if (room) {
-          setRooms([{ id: room.id, name: room.name, type: "public", unread: room.unreeadCount || 0 }, ...rooms])
-        }
-        onClose()
-        setJoinRoomOpen(false)
-        router.push(`/dashboard/room/${room.id}`)
+      const room = res.data.data;
+      if (room) {
+        setRooms((prev) => [{ id: room.id, name: room.name, type: "public", unread: 0 }, ...prev]);
+        onSelectChat("room", room.id, room.name);
       }
-    } catch (error) {
-      console.error("Error joining room:", error)
+      setJoinRoomOpen(false);
+      onClose();
+    } catch (err) {
+      console.error(err);
     }
-  }
+  };
 
   const handleStartPrivateChat = async (userId: string, userName: string) => {
     try {
-      const response = await fetch("/api/user-chats", {
+      const res = await fetch("/api/user-chats", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId }),
-      })
-
-      if (response.ok) {
-        const newChat: Chat = { id: userId, name: userName, type: "private", unread: 0 }
-        if (!chats.find((c) => c.id === userId)) {
-          setChats([...chats, newChat])
-        }
-        router.push(`/dashboard/chat/${userId}`)
-        onClose()
+      });
+      if (res.ok) {
+        const newChat = { id: userId, name: userName, type: "private" as const, unread: 0 };
+        if (!chats.find((c) => c.id === userId)) setChats((prev) => [newChat, ...prev]);
+        onSelectChat("private", userId, userName);
+        setStartChatOpen(false);
+        onClose();
       }
-    } catch (error) {
-      console.error("Error starting chat:", error)
+    } catch (err) {
+      console.error(err);
     }
-  }
+  };
 
-  const isActive = (path: string) => pathname === path;
-
+  /* ---------- RENDER ---------- */
   return (
     <>
-      {isOpen && <div className="fixed inset-0 bg-black/50 lg:hidden z-30" onClick={onClose} />}
+      {isOpen && (
+        <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={onClose} />
+      )}
 
       <aside
-        className={`${
-          isOpen ? "translate-x-0" : "-translate-x-full"
-        } lg:translate-x-0 fixed lg:relative w-64 h-screen bg-card border-r border-border flex flex-col transition-transform duration-300 z-40`}
+        className={`
+          fixed lg:relative z-50 w-64 h-screen bg-card border-r border-border flex flex-col
+          transition-transform duration-300
+          ${isOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}
+        `}
       >
         {/* Header */}
         <div className="p-4 border-b border-border flex-shrink-0">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-bold text-primary">ChatRoom</h2>
-            <button
-              onClick={onClose}
-              className="lg:hidden p-1 hover:bg-background rounded transition"
-            >
+            <h2 className="text-lg font-bold text-primary">ChatHere</h2>
+            <button onClick={onClose} className="lg:hidden p-1 hover:bg-background rounded">
               <X className="w-5 h-5" />
             </button>
           </div>
+
           <div className="space-y-2">
-            <button
-              onClick={() => {
-                setCreateRoomOpen(true)
-              }}
-              className="w-full flex items-center justify-center gap-2 bg-primary hover:bg-primary/90 text-primary-foreground font-medium py-2 rounded-lg transition text-sm sm:text-base"
-            >
-              <Plus className="w-4 h-4" />
-              Create Room
+            <button onClick={() => setCreateRoomOpen(true)} className="w-full flex items-center justify-center gap-2 bg-primary hover:bg-primary/90 text-primary-foreground font-medium py-2 rounded-lg text-sm">
+              <Plus className="w-4 h-4" /> Create Room
             </button>
-            <button
-              onClick={() => {
-                setJoinRoomOpen(true)
-              }}
-              className="w-full flex items-center justify-center gap-2 bg-accent hover:bg-accent/90 text-accent-foreground font-medium py-2 rounded-lg transition text-sm sm:text-base"
-            >
-              <MessageCircle className="w-4 h-4" />
-              Join Room
+            <button onClick={() => setJoinRoomOpen(true)} className="w-full flex items-center justify-center gap-2 bg-accent hover:bg-accent/90 text-accent-foreground font-medium py-2 rounded-lg text-sm">
+              <MessageCircle className="w-4 h-4" /> Join Room
             </button>
-            <button
-              onClick={() => {
-                setStartChatOpen(true)
-              }}
-              className="w-full flex items-center justify-center gap-2 bg-accent hover:bg-accent/90 text-accent-foreground font-medium py-2 rounded-lg transition text-sm sm:text-base"
-            >
-              <MessageSquarePlus className="w-4 h-4" />
-              Private Chat
+            <button onClick={() => setStartChatOpen(true)} className="w-full flex items-center justify-center gap-2 bg-accent hover:bg-accent/90 text-accent-foreground font-medium py-2 rounded-lg text-sm">
+              <MessageSquarePlus className="w-4 h-4" /> Private Chat
             </button>
           </div>
         </div>
 
-        {/* Infinite Scroll Rooms */}
+        {/* Scrollable Content */}
         <div className="flex-1 overflow-y-auto">
+          {/* Rooms */}
           <div className="px-4 py-4">
-            <h3 className="text-xs font-semibold text-muted-foreground uppercase mb-3 px-2">
-              Your Rooms
-            </h3>
-
-            <div className="space-y-1 max-h-56 overflow-y-auto space-x-1">
-              {rooms.map((room, index) => (
-                <Link
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase mb-3 px-2">Your Rooms</h3>
+            <div className="space-y-1">
+              {rooms.map((room, idx) => (
+                <div
                   key={room.id}
-                  href={`/dashboard/room/${room.id}`}
-                  onClick={onClose}
-                  ref={index === rooms.length - 3 ? lastRoomRef : null}
-                  className={`flex items-center justify-between px-3 py-2.5 rounded-lg transition text-sm group ${
-                    isActive(`/dashboard/room/${room.id}`)
-                      ? "bg-primary/20 text-primary border border-primary/30"
-                      : "text-muted-foreground hover:bg-muted/50"
-                  }`}
+                  onClick={() => {
+                    onSelectChat("room", room.id, room.name);
+                    onClose();
+                  }}
+                  ref={idx === rooms.length - 3 ? lastRoomRef : null}
+                  className="flex items-center justify-between px-3 py-2.5 rounded-lg cursor-pointer text-sm hover:bg-muted/50 transition"
                 >
                   <div className="flex items-center gap-2 min-w-0">
                     <MessageCircle className="w-4 h-4 flex-shrink-0" />
@@ -286,47 +260,29 @@ export default function DashboardSidebar({ isOpen, onClose }: { isOpen: boolean;
                       {room.unread}
                     </span>
                   )}
-                </Link>
+                </div>
               ))}
-
-              {/* Loading more */}
-              {loadingRooms && page === 1 && (
-                <div className="py-8 text-center">
-                  <Loader2 className="w-5 h-5 animate-spin mx-auto text-muted-foreground" />
+              {loadingRooms && (
+                <div className="flex justify-center py-2">
+                  <Loader2 className="w-4 h-4 animate-spin" />
                 </div>
-              )}
-
-              {/* Load more indicator */}
-              {!loadingRooms && hasMore && (
-                <div className="py-4 text-center">
-                  <Loader2 className="w-4 h-4 animate-spin mx-auto text-muted-foreground" />
-                </div>
-              )}
-
-              {!hasMore && rooms.length > 10 && (
-                <p className="text-center text-xs text-muted-foreground py-3">
-                  All rooms loaded
-                </p>
               )}
             </div>
           </div>
 
-          {/* Direct Messages */}
+          {/* DMs */}
           <div className="px-4 py-4 border-t border-border">
-            <h3 className="text-xs font-semibold text-muted-foreground uppercase mb-3 px-2">
-              Direct Messages
-            </h3>
-            <div className="space-y-1 space-x-1">
-              {chats.map((chat) => (
-                <Link
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase mb-3 px-2">Direct Messages</h3>
+            <div className="space-y-1">
+              {chats.map((chat, idx) => (
+                <div
                   key={chat.id}
-                  href={`/dashboard/chat/${chat.id}`}
-                  onClick={onClose}
-                  className={`flex items-center justify-between px-3 py-2.5 rounded-lg transition text-sm ${
-                    isActive(`/dashboard/chat/${chat.id}`)
-                      ? "bg-primary/20 text-primary border border-primary/30"
-                      : "text-muted-foreground hover:bg-muted/50"
-                  }`}
+                  onClick={() => {
+                    onSelectChat("private", chat.id, chat.name);
+                    onClose();
+                  }}
+                  ref={idx === chats.length - 3 ? lastChatRef : null}
+                  className="flex items-center justify-between px-3 py-2.5 rounded-lg cursor-pointer text-sm hover:bg-muted/50 transition"
                 >
                   <div className="flex items-center gap-2">
                     <div className="w-2 h-2 bg-green-500 rounded-full" />
@@ -337,21 +293,21 @@ export default function DashboardSidebar({ isOpen, onClose }: { isOpen: boolean;
                       {chat.unread}
                     </span>
                   )}
-                </Link>
+                </div>
               ))}
+              {loadingChats && (
+                <div className="flex justify-center py-2">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                </div>
+              )}
             </div>
           </div>
         </div>
       </aside>
 
-      {/* Keep your modals */}
+      {/* Modals */}
       <CreateRoomModal isOpen={createRoomOpen} onClose={() => setCreateRoomOpen(false)} onCreate={handleCreateRoom} />
-      <JoinRoomModal
-        isOpen={joinRoomOpen}
-        onClose={() => setJoinRoomOpen(false)}
-        onJoin={handleJoinRoom}
-        joinedRoomIds={rooms.map((r) => r.id)}
-      />
+      <JoinRoomModal isOpen={joinRoomOpen} onClose={() => setJoinRoomOpen(false)} onJoin={handleJoinRoom} joinedRoomIds={rooms.map((r) => r.id)} />
       <StartPrivateChatModal
         isOpen={startChatOpen}
         onClose={() => setStartChatOpen(false)}

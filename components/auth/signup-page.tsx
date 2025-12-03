@@ -88,8 +88,7 @@ export default function SignupPage() {
         localStorage.setItem("authToken", data.data.token)
         localStorage.setItem("user", JSON.stringify(user))
 
-        // Redirect to dashboard
-        router.push("/dashboard")
+        window.location.href = "/dashboard";
       } else {
         setError(data.message || "OTP verification failed")
       }

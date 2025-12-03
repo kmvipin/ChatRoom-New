@@ -1,29 +1,21 @@
 import axios, { isAxiosError } from "axios";
+import { Page, ApiResponse } from "@/types/common";
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8080";
 
-interface SpringPage<T> {
-  data: {
-    content: T[];
-    last: boolean;
-    totalElements: number;
-    pageable: {
-      pageNumber: number;
-      pageSize: number;
-    };
-  };
-}
-
-interface RoomMessageDTO {
+interface DirectMessageDTO {
     id: number,
     uuid: string,
-    senderUsername: string,
     senderId: number,
-    roomId: number,
+    senderName: string,
+    senderAvatar: string,
+    receiverId: number,
     content: string,
-    contentType: string,
-    type: string,
-    timestamp: Date,
+    messageType: string,
+    fileUrl: string,
+    isDelivered: boolean,
+    isRead: boolean,
+    sentAt: Date,
 }
 
 export async function GET(request: Request,
@@ -31,7 +23,7 @@ export async function GET(request: Request,
 ) {
   const authHeader = request.headers.get("Authorization");
   const { searchParams } = new URL(request.url);
-  const { id: roomId } = await params;
+  const { id: otherUserId } = await params;
   const page = parseInt(searchParams.get("page") ?? "1");
   const size = parseInt(searchParams.get("size") ?? "50");
   const search = searchParams.get("search")?.trim() || "";
@@ -45,7 +37,7 @@ export async function GET(request: Request,
       params.search = search;
     }
 
-    const response = await axios.get<SpringPage<RoomMessageDTO>>(`${BACKEND_URL}/api/message/room/${roomId}`, {
+    const response = await axios.get<ApiResponse<Page<DirectMessageDTO>>>(`${BACKEND_URL}/api/message/private/${otherUserId}`, {
       params,
       headers: {
         "Content-Type": "application/json",
@@ -53,25 +45,31 @@ export async function GET(request: Request,
       },
     });
 
-    const springPage = response.data;
+    const springPage = response.data.data;
 
-    const roomMessages = springPage.data.content.map((msg) => ({
+    if (!springPage) {
+      return Response.json(
+        { roomMessages: [], hasMore: false, error: "Invalid response structure" },
+        { status: 500 }
+      );
+    }
+
+    const directMessage = springPage.content.map((msg) => ({
         id: msg.id,
-        uuid: msg.uuid,
-        sender: msg.senderUsername || "Unknown",
+        uuid:msg.uuid,
+        sender: msg.senderName || "Unknown",
         senderId: msg.senderId,
-        roomId: msg.roomId,
         content: msg.content,
-        contentType: msg.contentType,
-        type: msg.type,
-        timestamp: msg.timestamp,
+        contentType: msg.messageType,
+        type: "CHAT" as const,
+        timestamp: msg.sentAt,
     }));
 
     return Response.json({
-      roomMessages,
-      hasMore: !springPage.data.last,
+      messages: directMessage,
+      hasMore: !springPage.last,
       nextPage: page + 1,
-      total: springPage.data.totalElements,
+      total: springPage.totalElements,
     });
   } catch (error: any) {
     console.error("Error fetching rooms from backend:", error.message || error);

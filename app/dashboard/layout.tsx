@@ -1,40 +1,63 @@
-"use client"
+// app/dashboard/layout.tsx
+"use client";
 
-import type React from "react"
-
-import { useEffect, useState } from "react"
-import { useRouter } from 'next/navigation'
-import DashboardSidebar from "@/components/dashboard/sidebar"
-import Header from "@/components/dashboard/header"
+import { useState } from "react";
+import DashboardSidebar from "@/components/dashboard/sidebar";
+import Header from "@/components/dashboard/header";
+import ChatWindow from "@/components/ChatWindow";
+import PrivateChatWindow from "@/components/chat/PrivateChatWindow";
+import RoomChatWindow from "@/components/chat/RoomChatWindow";
 
 export default function DashboardLayout({
   children,
 }: {
-  children: React.ReactNode
+  children: React.ReactNode;
 }) {
-  const router = useRouter()
-  const [isLoaded, setIsLoaded] = useState(false)
-  const [sidebarOpen, setSidebarOpen] = useState(false)
-
-  useEffect(() => {
-    const token = localStorage.getItem("authToken")
-    if (!token) {
-      router.push("/")
-    } else {
-      setIsLoaded(true)
-    }
-  }, [router])
-
-  if (!isLoaded) return null
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [selectedChat, setSelectedChat] = useState<{
+    type: "room" | "private";
+    id: string;
+    title: string;
+  } | null>(null);
 
   return (
-    <div className="flex h-screen bg-background flex-col lg:flex-row">
-      <DashboardSidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
-      
+    <div className="flex h-screen bg-background">
+      {/* ONE SIDEBAR */}
+      <DashboardSidebar
+        isOpen={mobileOpen}
+        onClose={() => setMobileOpen(false)}
+        onSelectChat={(type, id, title) => {
+          setSelectedChat({ type, id, title });
+          setMobileOpen(false); // Close on mobile
+        }}
+      />
+
+      {/* MAIN CONTENT */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        <Header onMenuToggle={() => setSidebarOpen(!sidebarOpen)} />
-        <main className="flex-1 overflow-hidden bg-background">{children}</main>
+        <Header onMenuToggle={() => setMobileOpen((v) => !v)} />
+
+        <main className="flex-1 overflow-hidden">
+          {selectedChat?.type === "room" ? (
+            // <ChatWindow
+            //   key={`${selectedChat.type}-${selectedChat.id}`}
+            //   type={selectedChat.type}
+            //   id={selectedChat.id}
+            //   title={selectedChat.title}
+            // />
+            selectedChat?.type === "room" && <RoomChatWindow key={`room-${selectedChat.id}`} id={selectedChat.id} title={selectedChat.title} memberCount={45} />
+          ) : selectedChat?.type === "private" ? (
+            <PrivateChatWindow
+              key={`private-${selectedChat.id}`}
+              id={selectedChat.id}
+              title={selectedChat.title}
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center text-muted-foreground">
+              <p>Select a room or start a private chat</p>
+            </div>
+          )}
+        </main>
       </div>
     </div>
-  )
+  );
 }

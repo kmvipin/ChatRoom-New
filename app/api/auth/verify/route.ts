@@ -23,7 +23,6 @@ export async function POST(request: Request) {
         headers: { "Content-Type": "application/json" },
       }
     )
-    console.log("Verify OTP response:", response)
     if (response.data.success) {
       return Response.json({
         success: true,
@@ -31,6 +30,7 @@ export async function POST(request: Request) {
         data: {
           token: response.data.data.token,
           userName: response.data.data.userName,
+          userId: response.data.data.userId,
           email,
         },
       })

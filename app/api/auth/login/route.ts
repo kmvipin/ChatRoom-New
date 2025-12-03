@@ -35,7 +35,7 @@ export async function POST(req: Request) {
         token: response.data.data.token,
         userId: response.data.data.userId,
         email: response.data.data.email,
-        userName,
+        userName: response.data.data.userName,
       },
     })
   } catch (error: unknown) {

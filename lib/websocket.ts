@@ -1,156 +1,192 @@
-import SockJS from 'sockjs-client'
-import { Stomp } from '@stomp/stompjs'
+// src/lib/websocket.ts
+"use client";
+
+import SockJS from "sockjs-client";
+import { Client, IMessage } from "@stomp/stompjs";
 
 export interface Message {
-  id: string
-  sender: string
-  content: string
-  timestamp: string
-  type?: "CHAT" | "JOIN" | "LEAVE"
+  id: string;
+  sender: string;
+  senderId?: number;
+  content: string;
+  timestamp: string;
+  type?: "CHAT" | "JOIN" | "LEAVE";
 }
 
 export interface WebSocketConfig {
-  url: string
-  onConnect?: () => void
-  onDisconnect?: () => void
-  onError?: (error: any) => void
+  url: string;
+  onConnect?: () => void;
+  onDisconnect?: () => void;
+  onError?: (error: any) => void;
 }
 
-let client: any = null
+/* ------------------------------------------------------------------ */
+/*  Global STOMP client – one per app                                 */
+/* ------------------------------------------------------------------ */
+let stompClient: Client | null = null;
 
-export const connectWebSocket = (config: WebSocketConfig): Promise<any> => {
-  const token = localStorage.getItem('authToken') || '';
+/* ------------------------------------------------------------------ */
+/*  Connect – returns a Promise that resolves with the STOMP client   */
+/* ------------------------------------------------------------------ */
+export const connectWebSocket = (config: WebSocketConfig): Promise<Client> => {
+  const token = localStorage.getItem("authToken") || "";
+
   return new Promise((resolve, reject) => {
     try {
-      const socket = new SockJS(`${config.url}?jwt_token=Bearer ${token}`);
-      client = Stomp.over(socket)
-      
-      client.connect(
-        {},
-        () => {
-          console.log("WebSocket connected")
-          config.onConnect?.()
-          resolve(client)
-        },
-        (error: any) => {
-          console.error("WebSocket connection error:", error)
-          config.onError?.(error)
-          reject(error)
-        }
-      )
-    } catch (error) {
-      console.error("WebSocket setup error:", error)
-      reject(error)
+      const endpoint = `${config.url}?jwt_token=Bearer ${token}`;
+      console.log("SockJS →", endpoint);
+
+      const socket = new SockJS(endpoint);
+      stompClient = new Client({
+        webSocketFactory: () => socket, // <-- NEW API
+        debug: (str) => console.log("[STOMP]", str),
+        reconnectDelay: 3000,
+        heartbeatIncoming: 4000,
+        heartbeatOutgoing: 4000,
+      });
+
+      stompClient.onConnect = () => {
+        console.log("STOMP connected");
+        config.onConnect?.();
+        resolve(stompClient!);
+      };
+
+      stompClient.onStompError = (frame) => {
+        console.error("STOMP error:", frame.headers["message"], frame.body);
+        config.onError?.(frame);
+        reject(frame);
+      };
+
+      stompClient.onWebSocketClose = () => {
+        console.log("WebSocket closed");
+        config.onDisconnect?.();
+      };
+
+      stompClient.onWebSocketError = (err) => {
+        console.error("WebSocket error:", err);
+        config.onError?.(err);
+        reject(err);
+      };
+
+      stompClient.activate(); // <-- replaces client.connect(...)
+    } catch (e) {
+      console.error("SockJS setup error:", e);
+      config.onError?.(e);
+      reject(e);
     }
-  })
-}
+  });
+};
 
+/* ------------------------------------------------------------------ */
+/*  Disconnect                                                       */
+/* ------------------------------------------------------------------ */
 export const disconnectWebSocket = () => {
-  if (client && client.connected) {
-    client.disconnect(() => {
-      console.log("WebSocket disconnected")
-    })
+  if (stompClient?.active) {
+    stompClient.deactivate(); // NEW API
+    console.log("STOMP deactivated");
   }
-}
+  stompClient = null;
+};
 
+/* ------------------------------------------------------------------ */
+/*  Subscription type (no import needed)                             */
+/* ------------------------------------------------------------------ */
+type Subscription = {
+  unsubscribe: () => void;
+};
+
+/* ------------------------------------------------------------------ */
+/*  Subscribe to a room                                               */
+/* ------------------------------------------------------------------ */
 export const subscribeToRoom = (
   roomId: string,
-  onMessage: (message: Message) => void
-) => {
-  if (!client || !client.connected) {
-    console.error("WebSocket not connected")
-    return
+  onMessage: (msg: Message) => void
+): Subscription | undefined => {
+  if (!stompClient?.active) {
+    console.warn("subscribeToRoom: not active");
+    return undefined;
   }
 
-  if (client._subscriptions && client._subscriptions[`/topic/room/${roomId}`]) {
-    console.warn("Already subscribed to this room:", roomId);
-    return client._subscriptions[`/topic/room/${roomId}`];
+  const dest = `/topic/room/${roomId}`;
+  if ((stompClient as any)._subscriptions?.[dest]) {
+    console.warn("Already subscribed to room:", roomId);
+    return (stompClient as any)._subscriptions[dest];
   }
 
-  const subscription = client.subscribe(
-    `/topic/room/${roomId}`,
-    (message: any) => {
-      try {
-        const parsedMessage = JSON.parse(message.body);
-
-        onMessage({
-          ...parsedMessage,
-          sender: parsedMessage.senderUsername
-        });
-
-      } catch (error) {
-        console.error("Error parsing message:", error)
-      }
+  const sub = stompClient.subscribe(dest, (msg: IMessage) => {
+    try {
+      const payload = JSON.parse(msg.body);
+      onMessage({
+        ...payload,
+        sender: payload.senderUsername ?? payload.sender,
+      });
+    } catch (e) {
+      console.error("Parse error (room):", e);
     }
-  )
+  });
 
-  return subscription
-}
+  return { unsubscribe: () => sub.unsubscribe() };
+};
 
-export const subscribeToPrivateChat = (userId : number,
-  onMessage: (message: Message) => void
-) => {
-  if (!client || !client.connected) {
-    console.error("WebSocket not connected")
-    return
+/* ------------------------------------------------------------------ */
+/*  Subscribe to private DM                                           */
+/* ------------------------------------------------------------------ */
+export const subscribeToPrivateChat = (
+  userId: string,
+  onMessage: (msg: Message) => void
+): Subscription | undefined => {
+  if (!stompClient?.active) {
+    console.warn("subscribeToPrivateChat: not active");
+    return undefined;
   }
 
-  const subscription = client.subscribe(
-    `/user/${userId}/queue/dm`,
-    (message: any) => {
-      try {
-        const parsedMessage = JSON.parse(message.body)
-        onMessage(parsedMessage)
-      } catch (error) {
-        console.error("Error parsing message:", error)
-      }
+  const dest = `/user/${userId}/queue/dm`;
+  if ((stompClient as any)._subscriptions?.[dest]) {
+    console.warn("Already subscribed to DM:", userId);
+    return (stompClient as any)._subscriptions[dest];
+  }
+
+  const sub = stompClient.subscribe(dest, (msg: IMessage) => {
+    try {
+      const payload = JSON.parse(msg.body);
+      onMessage(payload);
+    } catch (e) {
+      console.error("Parse error (DM):", e);
     }
-  )
+  });
 
-  return subscription
-}
+  return { unsubscribe: () => sub.unsubscribe() };
+};
 
+/* ------------------------------------------------------------------ */
+/*  Send messages                                                     */
+/* ------------------------------------------------------------------ */
 export const sendRoomMessage = (
   roomId: string,
   message: Omit<Message, "id" | "timestamp">
 ) => {
-  if (!client || !client.connected) {
-    console.error("WebSocket not connected")
-    return
-  }
-
-  const fullMessage = {
-    ...message,
-    id: `${Date.now()}`
-    }
-
-  client.send(
-    `/app/chat.room.${roomId}`,
-    {},
-    JSON.stringify(fullMessage)
-  ) 
-}
+  if (!stompClient?.active) return;
+  const payload = { ...message, id: `${Date.now()}` };
+  stompClient.publish({
+    destination: `/app/chat.room.${roomId}`,
+    body: JSON.stringify(payload),
+  });
+};
 
 export const sendPrivateMessage = (
   recipientId: string,
   message: Omit<Message, "id" | "timestamp">
 ) => {
-  if (!client || !client.connected) {
-    console.error("WebSocket not connected")
-    return
-  }
-
-  const fullMessage = {
+  if (!stompClient?.active) return;
+  const payload = {
     ...message,
     id: `msg-${Date.now()}`,
-    timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-  }
+    timestamp: new Date().toISOString(),
+  };
+  stompClient.publish({
+    destination: `/app/chat.private.${recipientId}`,
+    body: JSON.stringify(payload),
+  });
+};
 
-  client.send(
-    `/app/chat.private.${recipientId}`,
-    {},
-    JSON.stringify(fullMessage)
-  )
-}
-
-export const getWebSocketClient = () => client
+export const getWebSocketClient = () => stompClient;

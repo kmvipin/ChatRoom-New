@@ -13,3 +13,11 @@ export interface ApiResponse<T> {
   message: string;
   data?: T;
 }
+
+export interface Message {
+  id: string
+  sender: string
+  content: string
+  timestamp: string
+  type?: "CHAT" | "JOIN" | "LEAVE"
+}
