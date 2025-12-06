@@ -189,4 +189,15 @@ export const sendPrivateMessage = (
   });
 };
 
+export const readReceipt = (
+  recipientId: string
+) => {
+  console.log("readReceipt called for", recipientId);
+  if (!stompClient?.active) return;
+  stompClient.publish({
+    destination: `/app/chat.private.${recipientId}.read-receipt`,
+    body: "",
+  });
+};
+
 export const getWebSocketClient = () => stompClient;

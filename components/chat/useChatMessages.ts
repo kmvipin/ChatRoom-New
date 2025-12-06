@@ -1,10 +1,16 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useWebSocket } from "@/lib/websocket-provider";
+import { useUnread } from "@/lib/unread-context";
 import { DirectMessage, RoomMessage } from "./type";
 
 const PAGE_SIZE = 20;
 
 type ChatMessage = DirectMessage | RoomMessage;
+
+export interface UnreadEntry {
+  count: number;
+  lastMessage?: string;
+}
 
 export function useChatMessages<TMessage, TResponse>(
   type: "room" | "private",
@@ -15,7 +21,8 @@ export function useChatMessages<TMessage, TResponse>(
   }>,
   extract: (data: TResponse) => ChatMessage[]
 ) {
-  const { isConnected, subscribeRoom, subscribePrivate, sendRoom, sendPrivate } = useWebSocket();
+  const { isConnected, subscribeRoom, sendReadReceipt, sendRoom, sendPrivate, setPrivateMessageCallback } = useWebSocket();
+  const { unreadMap, updateUnread, markAsRead: markAsReadGlobal } = useUnread();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [pageInfo, setPageInfo] = useState({ hasMore: true, nextPage: 1 });
@@ -70,32 +77,64 @@ export function useChatMessages<TMessage, TResponse>(
   useEffect(() => {
     if (!id || !isConnected) return;
 
+    const userId = JSON.parse(localStorage.getItem("user") || "{}").id || "";
+
     const handleNewPrivateMessage = (msg: any) => {
-      console.log("Received new message:", msg);
+      console.log("Received new private message in useChatMessages:", msg);
+      const senderId = String(msg.senderId ?? msg.senderId?.toString?.() ?? "");
+
+      // Build a DirectMessage shape
       const pvtMsg: DirectMessage = {
         id: undefined as any,
         uuid: msg.uuid,
-        sender: msg.senderName,
+        sender: msg.senderName || msg.sender,
         senderId: msg.senderId,
         content: msg.content,
-        timestamp: msg.sentAt,
+        timestamp: msg.sentAt || msg.timestamp,
       };
-      setMessages((p) => [...p, pvtMsg])
+
+      // If message belongs to the currently open chat (senderId === id), append to messages
+      // Note: `id` for this hook when type==='private' is the other user's id
+      if(String(senderId) === String(id)) {
+        sendReadReceipt(senderId);
+      }
+      if (String(senderId) === String(id) || String(senderId) === String(userId)) {
+        setMessages((p) => [...p, pvtMsg]);
+        // Reset unread for this sender since user is viewing the chat
+        markAsReadGlobal(senderId);
+        return;
+      }
+
+      // Message is for a different chat (shouldn't reach here if callback is swapped properly)
+      console.log("Message for different chat, ignoring in useChatMessages");
     };
 
-    const handleNewRoomMessage = (msg: any) => {
-      console.log("Received new message:", msg);
-      setMessages((p) => [...p, msg])
+    // For private chats: set the callback to only handle messages for THIS chat
+    if (type === "private") {
+      console.log("useChatMessages: Setting private callback for chat", id);
+      setPrivateMessageCallback(handleNewPrivateMessage);
+
+      // Cleanup: revert callback when component unmounts or chat changes
+      return () => {
+        console.log("useChatMessages: Unsetting private callback for chat", id);
+        setPrivateMessageCallback(null);
+      };
     }
 
-    const userId = JSON.parse(localStorage.getItem("user") || "{}").id || "";
-    console.log("Subscribing to messages for", type, id, "as user", userId);
-    const unsub = type === "room"
-      ? subscribeRoom(id, handleNewRoomMessage)
-      : subscribePrivate(userId, handleNewPrivateMessage);
+    // For rooms: use standard room subscription
+    const handleNewRoomMessage = (msg: any) => {
+      console.log("Received new room message:", msg);
+      setMessages((p) => [...p, msg]);
+    };
 
+    console.log("Subscribing to room messages for", id, "as user", userId);
+    const unsub = subscribeRoom(id, handleNewRoomMessage);
     return unsub;
-  }, [id, type, isConnected, subscribeRoom, subscribePrivate]);
+  }, [id, type, isConnected, subscribeRoom, setPrivateMessageCallback, markAsReadGlobal]);
+
+  useEffect(() => {
+    console.log("Unread map updated in useChatMessages:", unreadMap);    
+  }, [unreadMap]);
 
   const send = useCallback((content: string, sender: string) => {
     if (!content.trim() || !isConnected) return;
@@ -106,5 +145,5 @@ export function useChatMessages<TMessage, TResponse>(
     }
   }, [type, id, isConnected, sendRoom, sendPrivate]);
 
-  return { messages, isLoadingOlder, hasError, loadOlder, send, isConnected };
+  return { messages, isLoadingOlder, hasError, loadOlder, send, isConnected, markAsRead: markAsReadGlobal };
 }

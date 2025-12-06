@@ -16,6 +16,7 @@ import {
   subscribeToPrivateChat,
   sendRoomMessage,
   sendPrivateMessage,
+  readReceipt,
   Message,
 } from "@/lib/websocket";
 
@@ -25,6 +26,8 @@ interface WSContextValue {
   subscribePrivate: (userId: string, cb: (msg: Message) => void) => () => void;
   sendRoom: (roomId: string, payload: Omit<Message, "id" | "timestamp">) => void;
   sendPrivate: (toId: string, payload: Omit<Message, "id" | "timestamp">) => void;
+  sendReadReceipt: (toId: string) => void;
+  setPrivateMessageCallback: (cb: ((msg: Message) => void) | null) => void;
 }
 
 const WSContext = createContext<WSContextValue | null>(null);
@@ -32,6 +35,10 @@ const WSContext = createContext<WSContextValue | null>(null);
 export const WebSocketProvider = ({ children }: { children: ReactNode }) => {
   const [isConnected, setIsConnected] = useState(false);
   const subsRef = useRef<Map<string, () => void>>(new Map());
+  
+  // Global callback ref for private messages (can be swapped)
+  const privateCallbackRef = useRef<((msg: Message) => void) | null>(null);
+  const privateSubRef = useRef<{ unsubscribe: () => void } | null>(null);
 
   // Connect once on mount
   useEffect(() => {
@@ -43,6 +50,20 @@ export const WebSocketProvider = ({ children }: { children: ReactNode }) => {
       url,
       onConnect: () => {
         console.log("WebSocketProvider: Connected");
+        const userId = JSON.parse(localStorage.getItem("user") || "{}").id || "";
+        
+        // Subscribe to private messages on connect (using callback ref)
+        if (userId && privateCallbackRef.current) {
+          console.log("WebSocketProvider: Subscribing to private messages for user", userId);
+          const sub = subscribeToPrivateChat(userId, (msg) => {
+            if (privateCallbackRef.current) {
+              privateCallbackRef.current(msg);
+            }
+          });
+          if (sub) {
+            privateSubRef.current = sub;
+          }
+        }
         
         setIsConnected(true);
       },
@@ -57,6 +78,9 @@ export const WebSocketProvider = ({ children }: { children: ReactNode }) => {
 
     return () => {
       console.log("WebSocketProvider: Cleaning up");
+      if (privateSubRef.current) {
+        privateSubRef.current.unsubscribe();
+      }
       disconnectWebSocket();
     };
   }, []);
@@ -126,12 +150,23 @@ export const WebSocketProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  const sendReadReceipt = (toId: string) => {
+    readReceipt(toId);
+  };
+
+  // Setter to swap the private message callback
+  const setPrivateMessageCallback = (cb: ((msg: Message) => void) | null) => {
+    privateCallbackRef.current = cb;
+  };
+
   const value: WSContextValue = {
     isConnected,
     subscribeRoom,
     subscribePrivate,
     sendRoom,
     sendPrivate,
+    sendReadReceipt,
+    setPrivateMessageCallback,
   };
 
   return <WSContext.Provider value={value}>{children}</WSContext.Provider>;

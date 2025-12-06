@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { WebSocketProvider } from "@/lib/websocket-provider"; // IMPORT IT
+import { UnreadProvider } from "@/lib/unread-context";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -21,10 +22,12 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${inter.className} bg-background text-foreground`}>
-        {/* WRAP children IN WebSocketProvider */}
-        <WebSocketProvider>
-          {children}
-        </WebSocketProvider>
+            {/* WRAP children: WebSocketProvider must be outer so UnreadProvider can subscribe */}
+            <WebSocketProvider>
+              <UnreadProvider>
+                {children}
+              </UnreadProvider>
+            </WebSocketProvider>
       </body>
     </html>
   );

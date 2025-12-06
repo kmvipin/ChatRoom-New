@@ -13,6 +13,7 @@ import CreateRoomModal from "@/components/modals/create-room-modal";
 import JoinRoomModal from "@/components/modals/join-room-modal";
 import StartPrivateChatModal from "@/components/modals/start-private-chat-modal";
 import api from "@/lib/api";
+import { useUnread } from "@/lib/unread-context";
 
 interface Room {
   id: string;
@@ -38,6 +39,9 @@ export default function DashboardSidebar({
   onClose,
   onSelectChat,
 }: Props) {
+  // === UNREAD ===
+  const { unreadMap, markAsRead, updateUnread } = useUnread();
+
   // === ROOMS ===
   const [rooms, setRooms] = useState<Room[]>([]);
   const [loadingRooms, setLoadingRooms] = useState(true);
@@ -117,6 +121,17 @@ export default function DashboardSidebar({
         type: "private" as const,
         unread: u.unread || 0,
       }));
+      
+
+      newChats.forEach((element: { unread: any; id: string; name: any; }) => {
+        if((element.unread ?? 0) > 0 && unreadMap[element.id] === undefined){
+          console.log("Adding to unread map from sidebar: ", element);
+          const unreadChat = { senderId : element.id, count : element.unread ?? 0, senderName:element.name, lastMessage: ""  };
+          updateUnread(element.id, element.unread ?? 0, unreadChat);
+        }
+      });
+
+      
       if (pageNum === 1) setChats(newChats);
       else setChats((prev) => [...prev, ...newChats]);
       setHasMoreChats(data.hasMore);
@@ -199,6 +214,17 @@ export default function DashboardSidebar({
     }
   };
 
+
+  useEffect(() => {
+    console.log("Sidebar unreadMap updated: ", unreadMap);
+    Object.keys(unreadMap).forEach((id) => {
+      if (!chats.find((c) => c.id === id)) {
+        const newChat = { id, name: unreadMap[id]?.senderName, type: "private" as const, unread: unreadMap[id]?.count || 0 };
+        setChats((prev) => [newChat as Chat, ...prev]);
+      }
+    });
+  }, [unreadMap, chats]);
+
   /* ---------- RENDER ---------- */
   return (
     <>
@@ -278,6 +304,7 @@ export default function DashboardSidebar({
                 <div
                   key={chat.id}
                   onClick={() => {
+                    markAsRead(chat.id);
                     onSelectChat("private", chat.id, chat.name);
                     onClose();
                   }}
@@ -288,9 +315,9 @@ export default function DashboardSidebar({
                     <div className="w-2 h-2 bg-green-500 rounded-full" />
                     <span className="truncate">{chat.name}</span>
                   </div>
-                  {chat.unread && chat.unread > 0 && (
-                    <span className="text-xs bg-secondary text-primary-foreground px-2 py-0.5 rounded-full">
-                      {chat.unread}
+                  {(unreadMap[chat.id]?.count ?? 0) > 0 && (
+                    <span className="text-xs bg-primary text-primary-foreground px-2 py-0.5 rounded-full">
+                      {unreadMap[chat.id]?.count}
                     </span>
                   )}
                 </div>
@@ -300,7 +327,7 @@ export default function DashboardSidebar({
                   <Loader2 className="w-4 h-4 animate-spin" />
                 </div>
               )}
-            </div>
+            </div>  
           </div>
         </div>
       </aside>
